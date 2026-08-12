@@ -8,6 +8,6 @@ __pycache__/
 *.pyc
 # 调试截图
 .shots/
-# 内部设计文档（不进仓库）
-PRD-画像澄清Agent.md
-字节AI招聘PM作业-画像澄清Agent.md
+# 根目录内部文档（不进仓库，README 除外）
+/*.md
+!README.md
