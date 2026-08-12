@@ -1,0 +1,6 @@
+flask>=3.0
+sqlalchemy>=2.0
+openai>=1.40
+json-repair>=0.30
+python-dotenv>=1.0
+qdrant-client>=1.12
