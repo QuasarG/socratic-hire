@@ -11,8 +11,10 @@ import type {
 } from "@/types";
 import PageToolbar from "@/components/layout/PageToolbar";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import Icon from "@/components/ui/Icon";
 import LoadingIndicator from "@/components/ui/LoadingIndicator";
+import OnboardingTour, { resetOnboarding } from "@/components/OnboardingTour";
 import ChatInput from "@/features/chat/ChatInput";
 import AssistantMessage from "@/features/chat/AssistantMessage";
 import SessionSidebar from "@/features/chat/SessionSidebar";
@@ -97,6 +99,8 @@ export default function App() {
   const [regenError, setRegenError] = useState("");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [busy, setBusy] = useState(false);
+  const [tourSignal, setTourSignal] = useState(0);
+  const [confirmRestart, setConfirmRestart] = useState(false);
   const convRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef("");
   const pollRef = useRef<number | null>(null);
@@ -255,6 +259,15 @@ export default function App() {
     loadSessions();
   };
 
+  /** 重新开始演示：新建会话 + 重放使用引导（旧会话留在侧栏历史中） */
+  const handleRestart = async () => {
+    setConfirmRestart(false);
+    if (busy) return;
+    await newChat();
+    resetOnboarding();
+    setTourSignal((n) => n + 1);
+  };
+
   /** 删除会话（单个/批量统一走批量端点）；删掉当前会话则切到最新或新建 */
   const handleDelete = async (ids: string[]) => {
     if (busy) return;
@@ -297,6 +310,15 @@ export default function App() {
           <div className="flex items-center gap-2">
             {regenError && <span className="text-label text-error">{regenError}</span>}
             <Button
+              variant="outlined"
+              icon="replay"
+              disabled={busy}
+              title="开启全新会话并重放使用引导"
+              onClick={() => setConfirmRestart(true)}
+            >
+              重新开始演示
+            </Button>
+            <Button
               variant="tonal"
               icon="refresh"
               disabled={!deliverables || regenerating}
@@ -321,7 +343,7 @@ export default function App() {
         />
 
         {/* 左栏：对话流 */}
-        <div className="flex-1 min-w-[480px] flex flex-col">
+        <div data-tour="chat-flow" className="flex-1 min-w-[480px] flex flex-col">
           <div ref={convRef} className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-5 pr-1 pb-2">
             {!ready ? (
               <div className="flex-1 flex items-center justify-center">
@@ -332,42 +354,61 @@ export default function App() {
                 <Icon name="psychology" size={40} className="text-on-surface-variant" />
                 <p className="text-title">说说你想招什么样的人？</p>
                 <p className="text-body-sm text-on-surface-variant">
-                  例如：「我们想招个后端，抖音电商方向的。」
-                  <br />
                   Agent 会像资深 HR 一样追问，右侧大纲与画像卡实时填充
                 </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {["我们想招个后端，抖音电商方向的。", "招一个 AI 产品经理实习生，base 北京。"].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => send(t)}
+                      className="state-layer rounded-full border border-primary/50 bg-surface-lowest px-3 py-1.5 text-body-sm text-primary cursor-pointer hover:bg-primary-container"
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : (
-              messages.map((msg, idx) =>
-                msg.role === "user" ? (
-                  <div
-                    key={msg.id}
-                    className="chat-enter self-end max-w-[80%] px-4 py-3 rounded-lg bg-primary-container text-on-primary-container text-body whitespace-pre-wrap"
-                  >
-                    {msg.segments.map((s) => (s.type === "text" ? s.text : "")).join("")}
-                  </div>
-                ) : (
+              messages.map((msg, idx) => {
+                if (msg.role === "user") {
+                  return (
+                    <div
+                      key={msg.id}
+                      className="chat-enter self-end max-w-[80%] px-4 py-3 rounded-lg bg-primary-container text-on-primary-container text-body whitespace-pre-wrap"
+                    >
+                      {msg.segments.map((s) => (s.type === "text" ? s.text : "")).join("")}
+                    </div>
+                  );
+                }
+                // 该 assistant 消息之后的下一条用户消息：历史回放时供卡片反推已选项
+                const nextUser = messages.slice(idx + 1).find((m) => m.role === "user");
+                const userReply = nextUser?.segments
+                  .map((s) => (s.type === "text" ? s.text : ""))
+                  .join("");
+                return (
                   <AssistantMessage
                     key={msg.id}
                     message={msg}
                     busy={busy && msg.id === activeIdRef.current}
                     interactive={idx === messages.length - 1 && !busy}
                     onSend={send}
+                    userReply={userReply}
                   />
-                )
-              )
+                );
+              })
             )}
           </div>
           <ChatInput busy={busy} onSend={send} />
         </div>
 
         {/* 中栏：提问大纲 */}
-        <div className="w-[300px] shrink-0 min-h-0">
+        <div data-tour="outline" className="w-[300px] shrink-0 min-h-0">
           <OutlinePanel outline={outline} />
         </div>
 
         {/* 右栏：画像卡 */}
-        <div className="w-[360px] shrink-0 min-h-0">
+        <div data-tour="profile" className="w-[360px] shrink-0 min-h-0">
           <ProfileCardPanel
             profile={profile}
             hasDeliverables={!!deliverables}
@@ -381,6 +422,34 @@ export default function App() {
       {showDeliverables && deliverables && (
         <DeliverablesPanel deliverables={deliverables} onClose={() => setShowDeliverables(false)} />
       )}
+
+      {confirmRestart && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-inverse-surface/40 p-6"
+          onClick={() => setConfirmRestart(false)}
+        >
+          <Card
+            variant="elevated"
+            className="w-full max-w-sm rounded-xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-title-lg">重新开始演示？</h3>
+            <p className="mt-2 text-body-sm text-on-surface-variant">
+              将开启全新会话并重新播放使用引导。当前会话会保留在左侧历史列表中。
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="text" onClick={() => setConfirmRestart(false)}>
+                取消
+              </Button>
+              <Button variant="filled" icon="replay" onClick={handleRestart}>
+                重新开始
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <OnboardingTour restartSignal={tourSignal} />
     </div>
   );
 }
