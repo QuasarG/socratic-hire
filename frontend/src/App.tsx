@@ -119,8 +119,10 @@ export default function App() {
     messagesRef.current = messages;
   }, [messages]);
 
-  const loadSessions = useCallback(async () => {
-    setSessions(await listSessions().catch(() => []));
+  const loadSessions = useCallback(async (): Promise<SessionSummary[]> => {
+    const list = await listSessions().catch(() => []);
+    setSessions(list);
+    return list;
   }, []);
 
   /** 轮询跟随：Agent 在跑（running=true）时每 2s 拉状态，直到新 assistant 消息落库或进程结束 */
@@ -182,23 +184,39 @@ export default function App() {
     [stopFollow, startFollow]
   );
 
-  // 会话恢复：?session= 优先，其次 sessionStorage，都没有才新建
+  /** 新建空白态：不向后端建会话，首发消息时才创建（懒创建，避免空会话污染侧栏） */
+  const resetToEmpty = useCallback(() => {
+    stopFollow();
+    setBusy(false);
+    setShowDeliverables(false);
+    sessionIdRef.current = "";
+    setSessionId("");
+    setMessages([]);
+    setProfile(null);
+    setOutline([]);
+    setDeliverables(null);
+    sessionStorage.removeItem("grill.session-id");
+    setReady(true);
+  }, [stopFollow]);
+
+  // 会话恢复：?session= 优先，其次 sessionStorage，都没有则进入空白态
   useEffect(() => {
     (async () => {
       loadSessions();
       const cached =
         new URLSearchParams(window.location.search).get("session") ||
         sessionStorage.getItem("grill.session-id");
-      const cachedState = cached ? await getState(cached).catch(() => null) : null;
-      if (cachedState) {
-        await openSession(cached as string, cachedState);
-      } else {
-        await openSession(await createSession());
-        loadSessions();
+      if (cached) {
+        const cachedState = await getState(cached).catch(() => null);
+        if (cachedState) {
+          await openSession(cached, cachedState);
+          return;
+        }
       }
+      resetToEmpty();
     })();
     return stopFollow;
-  }, [stopFollow, openSession, loadSessions]);
+  }, [stopFollow, openSession, loadSessions, resetToEmpty]);
 
   useEffect(() => {
     convRef.current?.scrollTo(0, convRef.current.scrollHeight);
@@ -210,7 +228,19 @@ export default function App() {
   };
 
   const send = async (text: string) => {
-    if (busy || !sessionId) return;
+    if (busy) return;
+    // 懒创建：空白态首发时才向后端建会话（避免空会话污染侧栏）
+    let sid = sessionId;
+    if (!sid) {
+      try {
+        sid = await createSession();
+      } catch {
+        return;
+      }
+      sessionIdRef.current = sid;
+      setSessionId(sid);
+      sessionStorage.setItem("grill.session-id", sid);
+    }
     setBusy(true);
     const tempId = `streaming-${Date.now()}`;
     activeIdRef.current = tempId;
@@ -220,7 +250,7 @@ export default function App() {
       { id: tempId, role: "assistant", segments: [] },
     ]);
     try {
-      const resp = await chatStream(sessionId, text);
+      const resp = await chatStream(sid, text);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       for await (const event of parseSSE(resp)) {
         const e = event as unknown as SseEvent;
@@ -253,10 +283,9 @@ export default function App() {
     openSession(sid);
   };
 
-  const newChat = async () => {
+  const newChat = () => {
     if (busy) return;
-    await openSession(await createSession());
-    loadSessions();
+    resetToEmpty();
   };
 
   /** 重新开始演示：新建会话 + 重放使用引导（旧会话留在侧栏历史中） */
@@ -268,18 +297,16 @@ export default function App() {
     setTourSignal((n) => n + 1);
   };
 
-  /** 删除会话（单个/批量统一走批量端点）；删掉当前会话则切到最新或新建 */
+  /** 删除会话（单个/批量统一走批量端点）；删掉当前会话则切到最新或进入空白态 */
   const handleDelete = async (ids: string[]) => {
     if (busy) return;
     await deleteSessions(ids).catch(() => {});
-    const list = await listSessions().catch(() => []);
-    setSessions(list);
+    const list = await loadSessions();
     if (!ids.includes(sessionIdRef.current)) return;
     if (list.length) {
       await openSession(list[0].session_id);
     } else {
-      await openSession(await createSession());
-      loadSessions();
+      resetToEmpty();
     }
   };
 
