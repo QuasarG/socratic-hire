@@ -11,10 +11,12 @@ interface Props {
   /** 仅最新消息且空闲时 true：提问卡选项可点 */
   interactive?: boolean;
   onSend?: (text: string) => void;
+  /** 紧随其后的用户消息原文：历史回放时据此回显卡片已选项 */
+  userReply?: string;
 }
 
 /** assistant 消息：按 segments 顺序渲染 文本(markdown) / 工具卡片 */
-export default function AssistantMessage({ message, busy, interactive = false, onSend }: Props) {
+export default function AssistantMessage({ message, busy, interactive = false, onSend, userReply }: Props) {
   const renderSegment = (seg: ChatSegment, i: number) => {
     if (seg.type === "text") {
       if (!seg.text.trim()) return null;
@@ -25,14 +27,14 @@ export default function AssistantMessage({ message, busy, interactive = false, o
       );
     }
     return (
-      <ToolCallCard key={seg.call_id || i} segment={seg} interactive={interactive} onSend={onSend} />
+      <ToolCallCard key={seg.call_id || i} segment={seg} interactive={interactive} onSend={onSend} userReply={userReply} />
     );
   };
 
   return (
     <div className="chat-enter flex gap-3">
       <div className="w-8 h-8 rounded-md bg-primary text-on-primary flex items-center justify-center text-body font-bold shrink-0 mt-0.5">
-        澄
+        AI
       </div>
       <div className="flex-1 min-w-0">
         {message.segments.map(renderSegment)}
